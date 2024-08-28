@@ -1,0 +1,10 @@
+Why is battery voltage different?
+What does "gps invalid" mean? why is it so persistent
+what does gps timeout 0 do?
+etc etc.
+
+
+App feedback:
+- the "swipe around" hint everywhere is annoying
+- the license page asks for an email, but the input isn't email...so the email-keyboard doesn't appear.
+-

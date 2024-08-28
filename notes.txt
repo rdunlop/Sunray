@@ -1,0 +1,4 @@
+Running commands via the console is possible
+- AT+V ->version
+- AT+F -> Test sensors (pushing bumpers or sonar will output to console)
+- .... see comm.cpp 'processCmd'
