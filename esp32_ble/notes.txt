@@ -1,0 +1,1 @@
+Had to install lwip library to avoid compilation error due to missing "lwip/netdb.h"
