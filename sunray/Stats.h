@@ -41,6 +41,9 @@ public:
   float statMowDistanceTraveled = 0; // meter
   float statTempMin = 9999;
   float statTempMax = -9999;
+  unsigned long statHeadingSnaps = 0;        // counter: times GPS heading snapped >45deg
+  float statHeadingSnapMaxDiff = 0;          // degrees: largest snap magnitude seen
+  unsigned long statHeadingSnapSpeedBlocked = 0; // counter: snaps suppressed by speed gate
 
   void calc();
 

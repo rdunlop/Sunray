@@ -758,7 +758,13 @@ void Comm::cmdStats(){
   s += stats.statMowImuNoRotationSpeedCounter;
   s += ",";
   s += stats.statMowRotationTimeoutCounter;
-  cmdAnswer(s);  
+  s += ",";
+  s += stats.statHeadingSnaps;
+  s += ",";
+  s += stats.statHeadingSnapMaxDiff;
+  s += ",";
+  s += stats.statHeadingSnapSpeedBlocked;
+  cmdAnswer(s);
 }
 
 // clear statistics
@@ -793,7 +799,10 @@ void Comm::cmdClearStats(){
   stats.statMowGPSNoSpeedCounter = 0;
   stats.statMowRotationTimeoutCounter = 0;
   stats.statMowToFCounter = 0;
-  cmdAnswer(s);  
+  stats.statHeadingSnaps = 0;
+  stats.statHeadingSnapMaxDiff = 0;
+  stats.statHeadingSnapSpeedBlocked = 0;
+  cmdAnswer(s);
 }
 
 // scan WiFi networks
