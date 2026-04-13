@@ -273,6 +273,8 @@ The response is also unlabeled. Fields in order:
 
 ### Other useful commands
 - **`AT+L`** — Clear all statistics. Run before a mowing session.
+- **`AT+DB`** — Dump the on-board diagnostic buffer as CSV to the console (120 s before last freeze). Does not clear the buffer — safe to run multiple times.
+- **`AT+DB,R`** — Reset (unfreeze + clear) the diagnostic buffer so it resumes recording for the next mow.
 - **`AT+Y2`** — Reboot the u-blox F9P GPS receiver if it appears stuck.
 - **`AT+C,-1,0,-1,-1,-1,-1,-1,-1,-1,-1,-1`** — Force IDLE (stop the mower safely).
 
@@ -296,55 +298,42 @@ The response is also unlabeled. Fields in order:
 
 ---
 
-## Firmware Modification Plan — On-Board Diagnostic Buffer
+## On-Board Diagnostic Buffer — `AT+DB`
 
-**Goal:** Without a continuously-connected laptop, the mower should record its own telemetry and make the recent history available on demand. This avoids needing to run anything externally during a mow.
+**Implemented in:** `sunray/DiagBuffer.h`, `sunray/DiagBuffer.cpp`. Hooked into `robot.cpp` (`diagBuffer.update()` after `stats.calc()`). Command wired as `AT+DB` / `AT+DB,R` in `comm.cpp`.
 
-### Concept
+### What it records
 
-A circular buffer inside the firmware stores a snapshot of key telemetry fields once per second. After a triggering condition is detected (see below), the buffer stops updating and preserves the last N seconds of history. The buffer can then be read via a serial command after the mow.
+1 Hz snapshots. Each entry is 36 bytes; 120 entries = ~4.3 KB of RAM.
 
-### Triggering condition (Phase 1)
+| Column | Field | Notes |
+|--------|-------|-------|
+| `t_s` | `timestamp_s` | `millis()/1000` |
+| `x` | east position (m) | |
+| `y` | north position (m) | |
+| `delta_rad` | heading (rad) | the thing that breaks |
+| `sol` | GPS solution | 0=invalid, 1=float, 2=fix |
+| `age_s` | RTK correction age (s) | NTRIP dropout indicator |
+| `sensor` | Sensor enum | 6=KIDNAPPED, 9=GPS_INVALID |
+| `op` | OperationType enum | 0=IDLE, 1=MOW |
+| `sv_dgps` | RTK satellite count | |
+| `lat_err` | lateral tracking error (m) | |
+| `spd_ms` | ground speed (m/s) | context for snap speed gate |
+| `snaps` | heading snaps fired this second | delta from AT+T cumulative |
+| `blocked` | snaps blocked by speed gate this second | |
+| `chkerr` | GPS NMEA checksum errors this second | EMI indicator |
 
-**Freeze the buffer when the mow blade motor turns off and stays off for more than 30 seconds.**
+### Freeze triggers
 
-Rationale: if the blade stops mid-mow, something went wrong. The 30-second window filters out intentional pauses (e.g., obstacle avoidance). At that moment, the last 120 seconds of telemetry is the most relevant data.
+The buffer records at 1 Hz continuously. It freezes (stops overwriting) on:
+1. **`FREEZE_BLADE_OFF`** — `motor.pwmMowOut == 0` for >30 s (filters brief obstacle pauses)
+2. **`FREEZE_KIDNAPPED`** — `stateSensor == SENS_KIDNAPPED` (immediate)
 
-### Buffer contents (per entry)
-- Timestamp (seconds since mow start, or `millis()` / 1000)
-- `x`, `y` — robot position (m)
-- `delta` — heading (radians)
-- `gps_sol` — GPS solution quality (0/1/2)
-- `dgps_age_s` — RTK correction age (s)
-- `sensor` — active error code
-- `lateral_err` — lateral tracking error (m)
-- `sv_dgps` — satellites with RTK corrections
-- `op` — current operation
+Once frozen the buffer holds the last ≤120 s before the event until explicitly reset.
 
-### Parameters
-- **Interval:** 1 second per entry
-- **Depth:** 120 entries (last 2 minutes before freeze)
-- **Total storage:** ~120 × ~40 bytes = ~5 KB (well within the Grand Central M4's 256 KB RAM)
-
-### Read command
-
-New AT command: **`AT+DB`** — "Diagnostic Buffer dump"
-
-Response: one line per buffer entry (oldest to newest), CSV format with a header row, followed by `OK`.
-
-### Where to implement in the code
-
-- New file: `sunray/DiagBuffer.h` / `DiagBuffer.cpp` — the buffer struct, write, freeze, and dump functions
-- Hook into `sunray/robot.cpp` `Robot::run()`: call `diagBuffer.record(...)` each second
-- Hook into mow motor state: when `motor.motorMowEnabled` transitions from true to false, start a 30-second countdown; freeze on expiry
-- Add `cmdDiagBuffer()` to `sunray/comm.cpp` alongside the other `AT+` handlers
-
-### Phase 2 (future)
-
-Once Phase 1 is working and the output is useful, consider:
-- **Multiple freeze triggers:** also freeze on `SENS_KIDNAPPED`, `SENS_GPS_FIX_TIMEOUT`, `SENS_MAP_NO_ROUTE`
-- **Auto-write to SD card** on freeze (rather than waiting for a manual read command)
-- **Configurable depth:** use the `AT+C` `<height>` field (unused on this machine) to set buffer depth at runtime (e.g., `height=60` → 60 seconds, `height=120` → 120 seconds)
+### Future extensions (not yet implemented)
+- Auto-write to SD card on freeze
+- Configurable depth via the `AT+C` `<height>` field (unused on this machine — see The Cutter Height Hack section below)
 
 ---
 

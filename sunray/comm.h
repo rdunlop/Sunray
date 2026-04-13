@@ -74,6 +74,7 @@ private:
   void cmdWiFiStatus();
   void cmdFirmwareUpdate();
   void cmdCamera();
+  void cmdDiagBuffer();
 };
 
 extern Comm comm;

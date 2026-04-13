@@ -43,6 +43,7 @@
 #include "bumper.h"
 #include "mqtt.h"
 #include "events.h"
+#include "DiagBuffer.h"
 
 // #define I2C_SPEED  10000
 #define _BV(x) (1 << (x))
@@ -1043,9 +1044,10 @@ void run(){
     timetable.run();
   }
 
-  stats.calc();  
-  
-  
+  stats.calc();
+  diagBuffer.update();
+
+
   if (millis() >= nextControlTime){        
     nextControlTime = millis() + 20; 
     stateEstimator.controlLoops++;    

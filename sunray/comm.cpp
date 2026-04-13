@@ -14,6 +14,7 @@ extern "C" void cameraStreamerStop();
 #include "httpserver.h"
 #include "ble.h"
 #include "events.h"
+#include "DiagBuffer.h"
 
 #ifdef __linux__
   #include <BridgeClient.h>
@@ -805,6 +806,19 @@ void Comm::cmdClearStats(){
   cmdAnswer(s);
 }
 
+// AT+DB   — dump diagnostic buffer to CONSOLE as CSV (does not unfreeze)
+// AT+DB,R — reset (unfreeze + clear) the diagnostic buffer
+void Comm::cmdDiagBuffer() {
+  bool isReset = (cmd.length() > 5) && (cmd[5] == ',') && (cmd[6] == 'R');
+  if (isReset) {
+    diagBuffer.reset();
+    cmdAnswer(F("DB,reset"));
+  } else {
+    diagBuffer.cmdDump();       // multi-line CSV written directly to CONSOLE
+    cmdAnswer(F("DB"));         // single-line CRC ack for any non-console callers
+  }
+}
+
 // scan WiFi networks
 void Comm::cmdWiFiScan(){
   CONSOLE.println("cmdWiFiScan");
@@ -1009,6 +1023,9 @@ void Comm::processCmd(String channel, bool checkCrc, bool decrypt, bool verbose)
   }
   if (cmd[3] == 'G') cmdToggleGPSSolution();   // for developers
   if (cmd[3] == 'K') cmdKidnap();   // for developers
+  if (cmd[3] == 'D') {
+    if ((cmd.length() > 4) && (cmd[4] == 'B')) cmdDiagBuffer();
+  }
   if (cmd[3] == 'Z') cmdStressTest();   // for developers
   if (cmd[3] == 'Y') {
     if (cmd.length() <= 4){
