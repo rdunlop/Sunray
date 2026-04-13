@@ -314,7 +314,7 @@ bool UBLOX::configure(){
         setValueSuccess &= configGPS.addCfgValset8(0x20910348, 20); // CFG-MSGOUT-UBX_NAV_SIG_USB   (every 20 solutions)
         setValueSuccess &= configGPS.addCfgValset8(0x2091005e, 0); // CFG-MSGOUT-UBX_NAV_TIMEUTC_USB   (off)   
         setValueSuccess &= configGPS.addCfgValset8(0x209100bd, 60); // CFG-MSGOUT-NMEA_ID_GGA_USB   (every 60 solutions)
-        setValueSuccess &= configGPS.sendCfgValset8(0x20910352, 70, timeout); // CFG-MSGOUT-UBX-MON-COMMS_USB   (every 70 solutions)
+        setValueSuccess &= configGPS.sendCfgValset8(0x20910350, 5, timeout); // CFG-MSGOUT-UBX-MON-COMMS_UART1  (every 5 solutions = 1 Hz)
       }
       else if (idx == 9){        
         // ----- uart1 messages (Ardumower) -----------------  
@@ -777,6 +777,10 @@ void UBLOX::dispatchMessage() {
                     default: ignore = true; break;
                   }
                   if (!ignore){
+                    // Store UART2 rx byte count for radio delivery diagnostics
+                    if (portId == 0x0201) {
+                      uart2RxBytes = rxBytes;
+                    }
                     CONSOLE.print(" tx=");
                     CONSOLE.print(txBytes);
                     CONSOLE.print(" (");
@@ -786,12 +790,12 @@ void UBLOX::dispatchMessage() {
                     CONSOLE.print(rxBytes);
                     CONSOLE.print(" (");
                     CONSOLE.print(rxPeakUsage);
-                    CONSOLE.print("% peak)  ");                    
+                    CONSOLE.print("% peak)  ");
                     CONSOLE.print("skipped=");
                     CONSOLE.print(skippedBytes);
-                    CONSOLE.print("    in-msgs: ");                  
+                    CONSOLE.print("    in-msgs: ");
                     for (int j=0; j < 4; j++){
-                      int protId = protIds[j];                     
+                      int protId = protIds[j];
                       int msgs = (unsigned short)this->unpack_int16(28 + i*40 + j*2);
                       if ((protId != 0xFF) && (msgs != 0)) {
                         switch (protId){
@@ -799,12 +803,12 @@ void UBLOX::dispatchMessage() {
                           case 1: CONSOLE.print(" NMEA="); break;
                           case 2: CONSOLE.print(" RTCM2="); break;
                           case 5: CONSOLE.print(" RTCM3="); break;
-                          case 6: CONSOLE.print(" SPARTN="); break;                        
+                          case 6: CONSOLE.print(" SPARTN="); break;
                           default: CONSOLE.print(" "); CONSOLE.print(protId, HEX); CONSOLE.print("=");
                         }
                         CONSOLE.print(msgs);
                       }
-                    }                
+                    }
                     CONSOLE.println();
                   }  
                 }

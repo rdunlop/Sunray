@@ -31,7 +31,8 @@ struct DiagEntry {
   uint8_t  snaps_fired;    // heading snaps that fired this second
   uint8_t  snaps_blocked;  // heading snaps blocked by speed gate this second
   uint8_t  chk_err;        // GPS NMEA checksum errors this second
-  uint8_t  _pad[2];        // alignment to 4-byte boundary → 36 bytes total
+  uint8_t  dgps_pkt_s;     // RTCM packets received this second (delta of gps.dgpsPacketCounter)
+  uint16_t uart2_rx_Bps;   // bytes/s received on rover F9P UART2 from radio (UBX-MON-COMMS); 0 = radio silent
 };
 
 class DiagBuffer {
@@ -64,6 +65,8 @@ private:
   uint32_t lastHeadingSnaps         = 0;
   uint32_t lastHeadingSnapBlocked   = 0;
   uint32_t lastGpsChkErr            = 0;
+  uint32_t lastDgpsPktCount         = 0;
+  uint32_t lastUart2RxBytes         = 0;
 };
 
 extern DiagBuffer diagBuffer;

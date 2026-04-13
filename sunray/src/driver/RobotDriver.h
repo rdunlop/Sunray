@@ -159,6 +159,7 @@ class GpsDriver {
     unsigned long chksumErrorCounter;
     unsigned long dgpsChecksumErrorCounter;
     unsigned long dgpsPacketCounter;
+    unsigned long uart2RxBytes = 0;  // cumulative bytes received by rover F9P on UART2 (from radio), updated by UBX-MON-COMMS
     int year;          // UTC time year (1999..2099)
     int month;         // UTC time month (1..12)
     int day;           // UTC time day (1..31)

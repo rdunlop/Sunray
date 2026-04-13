@@ -304,7 +304,7 @@ The response is also unlabeled. Fields in order:
 
 ### What it records
 
-1 Hz snapshots. Each entry is 36 bytes; 120 entries = ~4.3 KB of RAM.
+1 Hz snapshots. 120 entries = ~4.8 KB of RAM.
 
 | Column | Field | Notes |
 |--------|-------|-------|
@@ -313,7 +313,7 @@ The response is also unlabeled. Fields in order:
 | `y` | north position (m) | |
 | `delta_rad` | heading (rad) | the thing that breaks |
 | `sol` | GPS solution | 0=invalid, 1=float, 2=fix |
-| `age_s` | RTK correction age (s) | NTRIP dropout indicator |
+| `age_s` | RTK correction age (s) | radio dropout indicator |
 | `sensor` | Sensor enum | 6=KIDNAPPED, 9=GPS_INVALID |
 | `op` | OperationType enum | 0=IDLE, 1=MOW |
 | `sv_dgps` | RTK satellite count | |
@@ -322,6 +322,8 @@ The response is also unlabeled. Fields in order:
 | `snaps` | heading snaps fired this second | delta from AT+T cumulative |
 | `blocked` | snaps blocked by speed gate this second | |
 | `chkerr` | GPS NMEA checksum errors this second | EMI indicator |
+| `dgps_pkt_s` | RTCM packets accepted by F9P this second | 0 = no valid corrections arriving |
+| `uart2_rx_Bps` | Bytes/s on rover F9P UART2 from radio | 0 = radio completely silent at F9P |
 
 ### Freeze triggers
 
@@ -367,3 +369,265 @@ Since the machine has no cutter height motor, the `<height>` field in `AT+C` com
 5. **Implement the on-board diagnostic buffer** (see Firmware Modification Plan section). With a 120-second frozen buffer readable after a failure, the next run will show exactly what was happening second-by-second around the heading flip event — specifically whether GPS sol or delta changed suddenly at the moment of the mow_invalid_recov.
 
 6. **Re-examine IMU possibility.** The gyroscope (yaw rate) part of an IMU would provide a sanity check: if delta changes by 180° in one control cycle without the gyro agreeing, the firmware could reject the bad reading. The magnetometer/compass is still suspect due to motor interference. Gyro-only heading integration with periodic GPS correction may be worth investigating.
+
+---
+
+## Staged Diagnostic Plan: Pinpointing RTK Correction Loss
+
+### Overview
+
+The run 2 data confirmed the proximate mechanism of the heading flip: an RTK correction dropout (`max_dgps_age_s = 24.40 s`) degraded GPS quality, the heading snap fired (`heading_snap_max_deg = 169.80°`), and the mower was lost. What we do not yet know is *where in the correction chain* that 24 s gap originated.
+
+The purpose of this plan is to gather data that proves which stage is the primary cause, so that targeted fixes can be applied rather than guessing.
+
+### The RTK Correction Pipeline
+
+Corrections do **not** flow through the MCU, ESP32, or phone app. Two independent data paths operate in parallel:
+
+```
+Correction chain:
+  [A] Base F9P (house)  →  RTCM  →  [B] Radio link  →  RTCM  →  [C] Rover F9P UART2
+      broadcasts RTCM              (RF, antenna)             applies corrections
+
+Position/heading chain (separate):
+  [C] Rover F9P UART1  →  [D] MCU  ←  EMI from motors
+      NMEA / UBX                        gps_chk_err
+```
+
+**Stage A — Base Station:** The physical F9P mounted at the house. Produces and transmits RTCM.  
+**Stage B — Radio Link:** The RF path between base and rover. Can drop, corrupt, or delay packets.  
+**Stage C — Rover F9P:** Receives RTCM on UART2, applies corrections, reports fix quality on UART1.  
+**Stage D — GPS UART EMI:** Separate EMI problem on UART1 (rover F9P → MCU). Causes `gps_chk_err`.
+
+---
+
+### What Can Go Wrong at Each Stage
+
+| Stage | Failure mode | Observable symptom |
+|-------|-------------|-------------------|
+| A — Base station | Power loss, reboot, or software hang | `dgps_age_s` climbs steadily; base log shows zero-byte gap |
+| A — Base station | Survey-in not complete; base in float mode | `dgps_age_s` stable but `gps_sol` never reaches 2 (RTK fix) |
+| A — Base station | Base loses sky view (cloud, obstruction, tree) | Intermittent `dgps_age_s` spikes; correlated with weather |
+| B — Radio link | RF interference from other equipment | `dgps_chk_err > 0` (corrupt packets arriving); position correlation unlikely |
+| B — Radio link | Range or obstruction (far end of lawn) | Failures cluster at specific lawn positions |
+| B — Radio link | Antenna damage or disconnection | Sudden onset; consistent failures everywhere |
+| B — Radio link | ISM-band duty-cycle limit (EU: ≤1% TX) | Periodic dropouts at regular intervals |
+| C — Rover F9P | DGNSS timeout too short | `gps_sol` drops to invalid even with fresh corrections |
+| D — GPS UART EMI | Blade motor PWM coupling into GPS cable | `gps_chk_err` increases when blade motor is on |
+
+---
+
+### Stage A: Base Station Diagnostics
+
+**Goal:** Verify the base F9P outputs RTCM continuously during a mow, with no unexplained gaps.
+
+#### Option 1 — u-center (simplest, Windows/Mac)
+
+1. Connect the base station F9P to a laptop via USB during a mow session.
+2. Open u-center and connect to the base serial port.
+3. Enable these messages at 1 Hz via **View → Message View**:
+   - `UBX-NAV-PVT` — fix type (`fixType`: 5 = TIME mode for a surveyed-in base), satellite count (`numSV`)
+   - `UBX-MON-COMMS` — per-port byte counts, particularly UART2 TX (RTCM output)
+4. Record a log for the full mow session (**File → Receiver → Log**).
+5. After the mow, inspect the log for any period where RTCM byte count stopped incrementing.
+
+**What to look for:**
+- `fixType` should be 5 (TIME) continuously. If it drops to 3 (3D fix) the base is no longer in fixed-position mode.
+- `numSV` should be stable at 15+. A sudden drop suggests sky view obstruction.
+- UART2 TX byte count should increment every second. A flat period = base stopped transmitting.
+
+#### Option 2 — RTKlib `str2str` (Mac terminal, no GUI)
+
+Install RTKlib (`brew install rtklib`) then run during a mow:
+
+```bash
+str2str -in serial://DEVICE:115200 -out file://base_rtcm_%Y%m%d_%H%M%S.log -t 1
+```
+
+Replace `DEVICE` with the base F9P's USB serial device (e.g. `/dev/tty.usbserial-*`). The `-t 1` flag writes a new log file every hour.
+
+After the session, inspect byte counts per second:
+
+```bash
+# Quick check: show file sizes per 10s segment (proxy for byte rate)
+ls -la base_rtcm_*.log
+```
+
+A significantly smaller or zero-byte period in the log at a timestamp matching the mower's DiagBuffer `dgps_age_s` spike confirms Stage A is the culprit.
+
+**Interpretation:**
+- Base log gap **coincides** with mower `dgps_age_s` spike → **Stage A is the cause**
+- Base log is continuous throughout → base is fine, look at Stage B
+
+---
+
+### Stage B: Radio Link Diagnostics
+
+**Goal:** Determine whether the radio link is dropping or corrupting RTCM packets.
+
+#### Quick indicator — `dgps_chk_err` (already available)
+
+`AT+T` column 14 (`dgps_chk_err`) counts RTCM packets received by the rover F9P that failed the CRC check. This is the most powerful single diagnostic for Stage B:
+
+| `dgps_chk_err` | `dgps_age_s` spike | Interpretation |
+|---|---|---|
+| 0 | Yes | Radio link completely silent for that period (link down, or Stage A) |
+| > 0 | Yes | Packets arriving but corrupt → interference or marginal signal strength |
+| 0 | No | Radio link healthy; look at Stage A or C |
+
+Run `AT+T` after every mow session and record this value alongside `max_dgps_age_s`.
+
+#### Spatial correlation test
+
+Map where the mower was on the lawn when failures occurred. The app's map view shows approximate position at the time of events.
+
+- Failures at the **far end of the lawn** or at a specific corner → radio range or line-of-sight obstruction. Check if the house, fence, or a large obstacle sits between base antenna and that area of the lawn.
+- Failures **uniformly distributed** across the lawn → not a range/obstruction issue. More likely interference or a Stage A problem.
+
+#### RSSI query (SiK / 3DR radios)
+
+If the radio modules are SiK-based (3DR, Holybro, or equivalent), RSSI can be queried via AT commands without any additional equipment. Connect a serial terminal to the **radio module** (not the F9P):
+
+1. With the radio idle (no RTCM streaming), send `+++` (wait 1 s before and after, no newline).  
+   The radio should respond `OK`.
+2. Query signal strength:
+   - `ATI5` — remote RSSI (signal level seen by the **base** radio from the rover side)
+   - `ATI6` — local RSSI (signal level seen by the **rover** radio from the base side)
+   - `ATI7` — noise floor
+3. Type `ATO` and press Enter to return to transparent data mode.
+
+A reading of −90 dBm or worse is marginal. Moving the base antenna higher (on a mast or upper floor window) and ensuring it is vertical typically improves range significantly.
+
+For other radio types (LoRa module, XBee, etc.), consult the module's documentation for RSSI commands.
+
+#### Interference test
+
+Known interference sources on common ISM bands:
+
+| Band | Common interferers |
+|------|--------------------|
+| 433 MHz | Weather stations, remote controls, IoT sensors |
+| 868 MHz | LoRa IoT gateways, burglar alarms, smart meters (EU) |
+| 915 MHz | LoRa (US), FHSS radios |
+| 2.4 GHz | WiFi, Bluetooth (unlikely for radio-link RTCM) |
+
+Test: power off or move away from nearby ISM-band devices (outdoor weather sensors, smart meter box, WiFi extenders) and do a mow run. If failure rate drops significantly, interference was a contributor.
+
+**EU duty-cycle note:** 868 MHz ISM radios in the EU are legally limited to ≤1% transmit time per hour (roughly 36 s/hour). A radio transmitting RTCM at full rate may hit this limit during a long mow and be forced silent for several seconds. Check the radio module's documentation to confirm whether it enforces duty-cycle limiting.
+
+---
+
+### Stage C: Rover F9P Diagnostics
+
+**Goal:** Verify the rover F9P is correctly receiving and applying corrections when they arrive.
+
+#### Data already available (no code changes)
+
+These fields are captured by the DiagBuffer (`AT+DB`) at 1 Hz:
+
+| Column | Field | What it tells you |
+|--------|-------|------------------|
+| `age_s` | `dgps_age_s` | Seconds since last RTCM accepted by F9P. Rising → corrections not arriving. |
+| `sol` | `gps_sol` | 0=invalid, 1=float, 2=RTK fix. Drops 15–60 s after corrections stop. |
+| `sv_dgps` | RTK satellite count | Falls if some (not all) correction messages are missing. |
+
+`AT+T` also provides:
+- Column 14: `dgps_chk_err` — cumulative count of corrupt RTCM packets received at the F9P UART2.
+
+If `dgps_chk_err = 0` throughout a session, every RTCM packet that arrived was valid. Combined with `dgps_age_s` spikes, this tells us packets were simply absent (not corrupt).
+
+#### DGNSS timeout check
+
+The F9P will discard old corrections after `GPS_CONFIG_DGNSS_TIMEOUT` seconds (default 60 in `config.h`). If this is too short and the radio link has occasional gaps, the F9P may declare corrections stale and downgrade to float prematurely. Verify in u-center:
+
+**View → Configuration View → DGNSS → Differential correction timeout (seconds)**
+
+This should be ≥60 s. A value of 15 would explain rapid solution degradation even with modest radio gaps.
+
+#### Implemented — `dgps_pkt_s` and `uart2_rx_Bps`
+
+Both fields are now recorded in the DiagBuffer (added 2026-04-13):
+
+| Column | Source | What it tells you |
+|--------|--------|------------------|
+| `dgps_pkt_s` | delta of `gps.dgpsPacketCounter` (UBX-RXM-RTCM on UART1) | RTCM packets accepted by the rover F9P this second |
+| `uart2_rx_Bps` | delta of `gps.uart2RxBytes` (UBX-MON-COMMS on UART1, every 5 solutions) | Raw bytes received by the rover F9P on UART2 from the radio |
+
+`uart2_rx_Bps` is the deeper indicator: it counts *all* bytes from the radio, even bytes that aren't valid RTCM. Together:
+- `uart2_rx_Bps = 0` → radio is delivering nothing to the F9P UART2 (link down or base off)
+- `uart2_rx_Bps > 0, dgps_pkt_s = 0` → bytes arriving but no valid RTCM frames (heavy corruption)
+- `uart2_rx_Bps > 0, dgps_pkt_s > 0` → corrections flowing normally
+
+---
+
+### Stage D: GPS UART EMI Isolation Test
+
+**Goal:** Prove whether `gps_chk_err` comes primarily from the blade motor, drive motors, or baseline cable routing, and quantify each contribution separately.
+
+This is a separate issue from correction delivery. EMI corrupts the NMEA/UBX data on UART1 (rover F9P → MCU). A corrupted sentence has a ~1/256 chance of passing the NMEA XOR checksum and being silently accepted as valid data — which can cause a heading snap even without any RTK dropout.
+
+#### Procedure
+
+Connect USB serial and open a terminal at 115200 baud. For each step, run `AT+L` first to reset counters, wait the stated time, then record `gps_chk_err` from `AT+T`.
+
+| Step | Condition | Duration | Record |
+|------|-----------|----------|--------|
+| 1 | All motors off, mower stationary in open lawn | 3 min | `gps_chk_err` (baseline) |
+| 2 | Blade motor on at full speed, mower stationary | 3 min | `gps_chk_err` |
+| 3 | Drive motors on, mow pattern at normal speed, blade off | 3 min | `gps_chk_err` |
+| 4 | All motors on (normal mowing) | 3 min | `gps_chk_err` |
+
+Calculate error rate (errors per minute) for each step. The difference between steps indicates which motor(s) are the primary EMI source.
+
+**Interpretation:**
+
+| Pattern | Most likely cause |
+|---------|-----------------|
+| Step 2 >> step 1 | Blade motor PWM → GPS cable EMI. Reroute cable away from blade motor wires; add ferrite clamp to GPS serial cable. |
+| Step 3 >> step 1 | Drive motor PWM → GPS cable EMI. Check cable routing along mower frame near drive motor wires. |
+| Step 1 >> 0 (baseline errors exist) | GPS cable runs near another noise source (power rails, SD card SPI). Inspect physical routing. |
+| All steps similar and low | EMI is not a significant issue. Errors in run 2 (39 in 245 s) may have been temporary. |
+
+**Hardware mitigations:**
+- Add a ferrite clamp (clip-on, suitable for the cable diameter) as close to the MCU serial port as possible.
+- Route the GPS serial cable away from the blade motor power cable — keep them on opposite sides of the mower frame if possible.
+- Twist the GPS cable if it runs alongside a PWM signal wire (differential noise rejection).
+
+---
+
+### Correlation: Proving the Causal Chain
+
+After any failure, run `AT+DB` immediately (while still connected via USB) to retrieve the 120 s pre-failure snapshot. The causal chain to confirm in the CSV output:
+
+```
+age_s spikes    →  sol degrades  →  snaps > 0  →  delta flips ~180°
+(Stage A/B out)    (Stage C:F9P     (heading snap    (mower lost)
+                   loses RTK fix)   fires on bad
+                                    velocity)
+```
+
+Look for this sequence in consecutive rows. The exact second `age_s` first exceeds ~5 s is the moment corrections stopped — cross-reference that timestamp with the base station log (Stage A) to determine whether the base stopped transmitting at that moment.
+
+#### Decision table
+
+| Base log | `dgps_chk_err` after run | `dgps_age_s` spike in DiagBuffer | Conclusion |
+|----------|--------------------------|----------------------------------|------------|
+| Gap at same time as spike | Any | Yes | **Stage A** — base station stopped transmitting |
+| Continuous | 0 | Yes | **Stage B** — radio link completely lost (range, obstruction, antenna, power) |
+| Continuous | > 0 | Yes | **Stage B** — radio interference / marginal signal corrupting packets |
+| Continuous | 0 | No, but `snaps > 0` | **Stage D** — EMI corrupted sentence passed checksum; triggered snap without correction dropout |
+| Continuous | 0 | No, snaps = 0 | GPS quality fine; look for op/state machine issue |
+
+---
+
+### Summary: Data to Collect Each Session
+
+| When | Action | Purpose |
+|------|--------|---------|
+| Before mow | `AT+L` — clear stats | Ensure AT+T reflects only this session |
+| Before mow | `AT+DB,R` — reset DiagBuffer | Ensure buffer is unfrozen and ready to record |
+| During mow (if laptop available) | Run `str2str` on base F9P | Stage A logging |
+| Immediately after failure | `AT+DB` — dump buffer | Causal chain in 1 Hz resolution |
+| Immediately after failure | `AT+S` + `AT+T` — full snapshot | Heading error, correction age, checksum counts |
+| Periodic (any session) | Note mower position when failure occurs | Stage B spatial correlation |
+| Once (motor EMI test) | Motor isolation test procedure above | Stage D quantification |

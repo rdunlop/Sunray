@@ -30,6 +30,8 @@ void DiagBuffer::reset() {
   lastHeadingSnaps       = stats.statHeadingSnaps;
   lastHeadingSnapBlocked = stats.statHeadingSnapSpeedBlocked;
   lastGpsChkErr          = gps.chksumErrorCounter;
+  lastDgpsPktCount       = gps.dgpsPacketCounter;
+  lastUart2RxBytes       = gps.uart2RxBytes;
 }
 
 void DiagBuffer::update() {
@@ -43,9 +45,15 @@ void DiagBuffer::update() {
                       stats.statHeadingSnapSpeedBlocked - lastHeadingSnapBlocked);
   uint8_t chkerr  = (uint8_t)min((uint32_t)255,
                       gps.chksumErrorCounter - lastGpsChkErr);
+  uint8_t  pkt_s  = (uint8_t)min((uint32_t)255,
+                      gps.dgpsPacketCounter - lastDgpsPktCount);
+  uint16_t rx_Bps = (uint16_t)min((uint32_t)65535,
+                      gps.uart2RxBytes - lastUart2RxBytes);
   lastHeadingSnaps       = stats.statHeadingSnaps;
   lastHeadingSnapBlocked = stats.statHeadingSnapSpeedBlocked;
   lastGpsChkErr          = gps.chksumErrorCounter;
+  lastDgpsPktCount       = gps.dgpsPacketCounter;
+  lastUart2RxBytes       = gps.uart2RxBytes;
 
   // --- Record entry if not frozen ---
   if (!frozen) {
@@ -65,8 +73,8 @@ void DiagBuffer::update() {
     e.snaps_fired  = snaps;
     e.snaps_blocked = blocked;
     e.chk_err      = chkerr;
-    e._pad[0]      = 0;
-    e._pad[1]      = 0;
+    e.dgps_pkt_s   = pkt_s;
+    e.uart2_rx_Bps = rx_Bps;
 
     entries[head % DIAGBUF_SIZE] = e;
     head = (head + 1) % DIAGBUF_SIZE;
@@ -104,7 +112,7 @@ void DiagBuffer::cmdDump() {
     return;
   }
 
-  CONSOLE.println("t_s,x,y,delta_rad,sol,age_s,sensor,op,sv_dgps,lat_err,spd_ms,snaps,blocked,chkerr");
+  CONSOLE.println("t_s,x,y,delta_rad,sol,age_s,sensor,op,sv_dgps,lat_err,spd_ms,snaps,blocked,chkerr,dgps_pkt_s,uart2_rx_Bps");
 
   // Iterate oldest to newest
   int startIdx = (count < DIAGBUF_SIZE) ? 0 : head;
@@ -123,7 +131,9 @@ void DiagBuffer::cmdDump() {
     CONSOLE.print(e.ground_speed, 2);CONSOLE.print(',');
     CONSOLE.print(e.snaps_fired);   CONSOLE.print(',');
     CONSOLE.print(e.snaps_blocked); CONSOLE.print(',');
-    CONSOLE.println(e.chk_err);
+    CONSOLE.print(e.chk_err);      CONSOLE.print(',');
+    CONSOLE.print(e.dgps_pkt_s);   CONSOLE.print(',');
+    CONSOLE.println(e.uart2_rx_Bps);
   }
   CONSOLE.println("OK");
 }
