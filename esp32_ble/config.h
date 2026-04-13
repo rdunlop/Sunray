@@ -7,18 +7,17 @@
   Steps to install ESP32 for Arduino IDE 1.8.13:
      1. Arduino IDE: File->Preferences:  Add to board manager URLs: ",https://dl.espressif.com/dl/package_esp32_index.json"
      2. Choose "Tools->Board->Boards Manager"
-     3. Add board "esp32" (IMPORTANT!!! choose v1.0.4, latest v1.0.6 does not seem to connect to WiFi access point! )
+     3. Add board "esp32" (IMPORTANT!!! choose latest version )
      4. Choose Board "ESP32 Dev Module"  (if upload does not work: PRESS EN+BOOT, release EN  on your ESP32)
      5. Choose Partition Scheme "Minimal SPIFFS"  (otherwise you may get 'memory space errors' in the Arduino IDE)
     (also see: https://github.com/espressif/arduino-esp32/blob/master/docs/arduino-ide/boards_manager.md )
      6. Choose Port (Windows NOTE: if the port is not shown you may have to install drivers: https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
      7. Choose "Tools->Manager Libraries..."
-     8. Add library "ESP32_HTTPS_Server 1.0.0 by Frank Hessel"
-     9. Add library "ArduinoJson 6.18.5 by Benoit Blanchon" and "ThingsOfValue SDK for Arduino 1.0.0 by Kyuseok Oh" (only required if activated 'USE_MQTT')
-     10. Add library "NimBLE-Arduino 1.3.1 by h2zero"  (requires less memory - only required if activated 'USE_NIM_BLE')
-     11. Copy this file into 'config.h'
-     12. Configure the options below and finally compile and upload this project.
-
+     8. Add library "ArduinoJson 6.18.5 by Benoit Blanchon" and "ThingsOfValue SDK for Arduino 1.0.0 by Kyuseok Oh" (only required if activated 'USE_MQTT')
+     9. Add library "NimBLE-Arduino 1.3.1 by h2zero"  (requires less memory - only required if activated 'USE_NIM_BLE')
+     10. Copy this file into 'config.h'     
+     11. Configure the options below and finally compile and upload this project.
+     
 
   wiring (also see wiring image in Github folder):
   ESP32 Rx2 (GPIO16) ---  Ardumower PCB1.3 Bluetooth conn RX   (3.3v level)
@@ -33,11 +32,11 @@
   - need to wait few secs after mower reboots before connecting (CRC issues)
   - need to close/reopen app if the phone disconnects (CRC issues)
 
-  Note: Please see and ask in the forum if you experience HTTP connection issues:
+  Note: Please see and ask in the forum if you experience HTTP connection issues: 
   https://forum.ardumower.de/threads/sunray-app-connection-issue-solved-sunray-app-verbindungsproblem-gel%C3%B6st.24467/
 
-  NOTE: If your ESP32 is not available as a device, you may have to install an USB driver:
-  https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers
+  NOTE: If your ESP32 is not available as a device, you may have to install an USB driver: 
+  https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers 
 
 */
 
@@ -49,7 +48,7 @@
 #define BLE_MIN_INTERVAL 2    // connection parameters (tuned for high speed/high power consumption - see: https://support.ambiq.com/hc/en-us/articles/115002907792-Managing-BLE-Connection-Parameters)
 #define BLE_MAX_INTERVAL 10
 #define BLE_LATENCY      0
-#define BLE_TIMEOUT      30
+#define BLE_TIMEOUT      30  
 #define USE_NIM_BLE   1 // use NimBLE library (requires less memory) instead of ESP32 library?
 
 //IP WiFi:
@@ -64,12 +63,14 @@
 
 #define WIFI_STA_SSID   "yourSSID"      // WiFi SSID      (leave empty ("") to not use WiFi)
 #define WIFI_STA_PSK    "yourPASSWORD"  // WiFi password  (leave empty ("") to not use WiFi)
-#define WIFI_TIMEOUT_FIRST_RESPONSE  800   // fast response times (500), for more reliable choose: 800
+#define WIFI_TIMEOUT_FIRST_RESPONSE  800   // fast response times (500), for more reliable choose: 800     
 #define WIFI_TIMEOUT_RESPONSE        400   // fast response times (100), for more reliable choose: 400
 
-// comment this line to use HTTP, uncomment to use HTTPS
-// NOTE: if using HTTPS, you also need to uncomment USE_NIM_BLE above!
-//#define USE_HTTPS  1
+// Intranet HTTP server (unencrypted, built-in WebServer)
+// Enable this to use the classic local HTTP bridge instead of cloud.
+// Note: do not use together with USE_CLOUD.
+#define USE_HTTP_SERVER 1
+
 
 
 // Relay server
@@ -84,7 +85,19 @@
 //#define RELAY_TIMEOUT   1000
 //#define RELAY_PINGWAIT  55
 
-// MQTT server
+// Cloud WebSocket (robot → cloud)
+// Mirrors Linux WS client (see linux/config_*_ws.h). Uses ESP32 core CA bundle only (no fallback).
+// Note: disable everything else (USE_BLE, USE_RELAY etc.) so ESP32 TLS get's enough memory 
+// (find out TLS memory issues with Arduino: Tools->Core Debug Level: Verbose)
+// Uncomment to enable and set your connect key.
+//
+//#define USE_CLOUD  1
+//#define WS_HOST "sunray.owlrobotics.app"
+//#define WS_PORT 443
+//#define WS_ROBOT_CONNECT_KEY "your_connect_key_here"
+// No insecure mode or pinned CA supported in this config.
+
+// MQTT server 
 // (subscribed topcis: '/command/start', '/command/stop', '/command/dock', '/command/reboot', '/command/shutdown', '/command/"every AT+... command supported by comm.cpp"')
 // e.g. command for start over AT+... payload: /command/AT+C,-1,1,0.29,100,0,-1,-1,1
 // (published topics: '/online', '/state', '/props', '/stats')
@@ -114,4 +127,3 @@
 
 #define CONSOLE Serial  // where to send/receive console messages for debugging etc.
 #define UART Serial2    // where to send/receive UART data
-
