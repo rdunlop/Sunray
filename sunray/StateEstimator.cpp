@@ -387,7 +387,7 @@ void StateEstimator::computeRobotState(){
                 || ((gps.solution == SOL_FLOAT) && (maps.useGPSfloatForDeltaEstimation)) )
             {   // allows planner to use float solution?         
               if (fabs(diffDelta/PI*180) > 45){ // IMU-based heading too far away => use GPS heading
-                if (stateGroundSpeed > 0.2){ // speed gate: GPS heading unreliable at low speed
+                if (stateGroundSpeed > 0.1){ // speed gate: GPS heading unreliable at low speed
                   stats.statHeadingSnaps++;
                   float snapDeg = fabs(diffDelta/PI*180);
                   if (snapDeg > stats.statHeadingSnapMaxDiff) stats.statHeadingSnapMaxDiff = snapDeg;
