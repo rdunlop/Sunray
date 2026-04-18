@@ -58,9 +58,10 @@ inline LineTracker makeLineTracker(
     Map&            mp,
     Motor&          mot,
     Op*&            opPtr,
-    SolType         sol)
+    SolType         sol,
+    std::function<unsigned long()> millisFn = nullptr)
 {
-    return LineTracker(est, mp, mot, opPtr, [sol]{ return sol; });
+    return LineTracker(est, mp, mot, opPtr, [sol]{ return sol; }, millisFn);
 }
 
 // ---------------------------------------------------------------------------

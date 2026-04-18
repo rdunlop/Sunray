@@ -211,3 +211,120 @@ TEST_CASE("Target reached: robot within tolerance fires onTargetReached") {
 
     REQUIRE(op.onTargetReachedCount >= 1);
 }
+
+// =============================================================================
+// GPS_TREE_SKIP — forced waypoint advance under tree canopy
+//
+// Robot position: (9.5, 0). Target: (10, 0). targetDist = 0.5m.
+//   - 0.5m < GPS_TREE_SKIP_MAX_DIST (1.0m)  → skip is distance-eligible
+//   - 0.5m > TARGET_REACHED_TOLERANCE (0.1m) → won't naturally trigger targetReached
+//
+// Timer: gpsDegradedSince is set on the first call (when GPS is non-FIXED).
+//        The skip fires on a subsequent call once the injected clock shows
+//        GPS_TREE_SKIP_TIMEOUT ms have elapsed.
+//
+// Fake time starts at 1 (not 0) because gpsDegradedSince == 0 is the "unset" sentinel.
+// =============================================================================
+
+TEST_CASE("GPS_TREE_SKIP: fires onTargetReached after timeout with degraded GPS") {
+    StateEstimator est = defaultEstimator();
+    Map            mp  = defaultMap();
+    Motor          mot = defaultMotor();
+    TestOp         op{};
+    Op*            opPtr = &op;
+
+    est.stateX = 9.5f;
+    est.stateY = 0.0f;
+
+    unsigned long fakeTime = 1;
+    LineTracker lt = makeLineTracker(est, mp, mot, opPtr, SOL_FLOAT,
+                                     [&fakeTime]{ return fakeTime; });
+
+    // Call 1: GPS is non-FIXED → starts the degradation timer (gpsDegradedSince = 1).
+    lt.trackLine(false);
+    REQUIRE(op.onTargetReachedCount == 0);  // timeout not yet elapsed
+
+    // Call 2: GPS still non-FIXED, timeout elapsed → treeSkip fires.
+    fakeTime = GPS_TREE_SKIP_TIMEOUT + 2;
+    lt.trackLine(false);
+
+    REQUIRE(op.onTargetReachedCount >= 1);
+}
+
+TEST_CASE("GPS_TREE_SKIP: does not fire when GPS recovers before timeout") {
+    StateEstimator est = defaultEstimator();
+    Map            mp  = defaultMap();
+    Motor          mot = defaultMotor();
+    TestOp         op{};
+    Op*            opPtr = &op;
+
+    est.stateX = 9.5f;
+    est.stateY = 0.0f;
+
+    unsigned long fakeTime = 1;
+    // Use a mutable sol so we can switch from FLOAT back to FIXED between calls.
+    SolType currentSol = SOL_FLOAT;
+    LineTracker lt(est, mp, mot, opPtr,
+                   [&currentSol]{ return currentSol; },
+                   [&fakeTime]  { return fakeTime;   });
+
+    // Call 1: degraded GPS → timer starts.
+    lt.trackLine(false);
+
+    // GPS recovers → timer resets to 0.
+    currentSol = SOL_FIXED;
+    fakeTime = GPS_TREE_SKIP_TIMEOUT / 2;
+    lt.trackLine(false);
+
+    // Call 3: past original timeout, but timer was reset — no skip.
+    fakeTime = GPS_TREE_SKIP_TIMEOUT + 2;
+    lt.trackLine(false);
+
+    REQUIRE(op.onTargetReachedCount == 0);
+}
+
+TEST_CASE("GPS_TREE_SKIP: does not fire when robot is too far from target") {
+    StateEstimator est = defaultEstimator();
+    Map            mp  = defaultMap();
+    Motor          mot = defaultMotor();
+    TestOp         op{};
+    Op*            opPtr = &op;
+
+    // 2m from target — beyond GPS_TREE_SKIP_MAX_DIST (1.0m).
+    est.stateX = 8.0f;
+    est.stateY = 0.0f;
+
+    unsigned long fakeTime = 1;
+    LineTracker lt = makeLineTracker(est, mp, mot, opPtr, SOL_FLOAT,
+                                     [&fakeTime]{ return fakeTime; });
+
+    lt.trackLine(false);
+
+    fakeTime = GPS_TREE_SKIP_TIMEOUT + 2;
+    lt.trackLine(false);
+
+    REQUIRE(op.onTargetReachedCount == 0);
+}
+
+TEST_CASE("GPS_TREE_SKIP: does not fire outside WAY_MOW mode") {
+    StateEstimator est = defaultEstimator();
+    Map            mp  = defaultMap();
+    Motor          mot = defaultMotor();
+    TestOp         op{};
+    Op*            opPtr = &op;
+
+    est.stateX  = 9.5f;
+    est.stateY  = 0.0f;
+    mp.wayMode  = WAY_DOCK;  // not mowing — skip must not fire
+
+    unsigned long fakeTime = 1;
+    LineTracker lt = makeLineTracker(est, mp, mot, opPtr, SOL_FLOAT,
+                                     [&fakeTime]{ return fakeTime; });
+
+    lt.trackLine(false);
+
+    fakeTime = GPS_TREE_SKIP_TIMEOUT + 2;
+    lt.trackLine(false);
+
+    REQUIRE(op.onTargetReachedCount == 0);
+}

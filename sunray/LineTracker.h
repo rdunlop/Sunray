@@ -33,7 +33,8 @@ public:
 
   LineTracker();  // production: pointers wired to firmware globals at construction
   LineTracker(StateEstimator& est, Map& mp, Motor& mot, Op*& op,
-              std::function<SolType()> gpsSol);  // testing: injected deps
+              std::function<SolType()> gpsSol,
+              std::function<unsigned long()> millisFn = nullptr);  // testing: injected deps
 
   void trackLine(bool runControl);
 
@@ -54,7 +55,8 @@ private:
   Map*                     _map;
   Motor*                   _mot;
   Op**                     _op;   // pointer-to-pointer so activeOp changes are visible
-  std::function<SolType()> _gpsSol;
+  std::function<SolType()>      _gpsSol;
+  std::function<unsigned long()> _millisFn;  // null → real millis()
 };
 
 

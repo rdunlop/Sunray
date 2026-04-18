@@ -28,13 +28,20 @@ LineTracker::LineTracker()
       _gpsSol([]{ return gps.solution; }) {}
 
 LineTracker::LineTracker(StateEstimator& est, Map& mp, Motor& mot, Op*& op,
-                         std::function<SolType()> gpsSol)
-    : _est(&est), _map(&mp), _mot(&mot), _op(&op), _gpsSol(std::move(gpsSol)) {}
+                         std::function<SolType()> gpsSol,
+                         std::function<unsigned long()> millisFn)
+    : _est(&est), _map(&mp), _mot(&mot), _op(&op),
+      _gpsSol(std::move(gpsSol)), _millisFn(std::move(millisFn)) {}
 
 // control robot velocity (linear,angular) to track line to next waypoint (target)
 // uses a stanley controller for line tracking
 // https://medium.com/@dingyan7361/three-methods-of-vehicle-lateral-control-pure-pursuit-stanley-and-mpc-db8cc1d32081
-void LineTracker::trackLine(bool runControl){  
+void LineTracker::trackLine(bool runControl){
+  // Time source: injected in tests so timers can be controlled; real millis() in production.
+  auto ms = [this]() -> unsigned long {
+    return _millisFn ? _millisFn() : (unsigned long)millis();
+  };
+
   Point target = _map->targetPoint;
   Point lastTarget = _map->lastTargetPoint;
   float linear = 1.0;  
@@ -132,7 +139,7 @@ void LineTracker::trackLine(bool runControl){
       // planner forces slow tracking (e.g. docking etc)
       linear = DOCK_LINEAR_SPEED; // 0.1           
     } else if (     ((_est->setSpeed > 0.2) && (_map->distanceToTargetPoint(_est->stateX, _est->stateY) < 0.5) && (!straight))   // approaching
-          || ((_est->linearMotionStartTime != 0) && (millis() < _est->linearMotionStartTime + 3000))                      // leaving  
+          || ((_est->linearMotionStartTime != 0) && (ms() < _est->linearMotionStartTime + 3000))                      // leaving  
        ) 
     {
       linear = 0.1; // reduce speed when approaching/leaving waypoints          
@@ -194,7 +201,7 @@ void LineTracker::trackLine(bool runControl){
   }
   // check some pre-conditions that can make linear+angular speed zero
   if ((_est->stateLocalizationMode == LOC_GPS) && (_est->fixTimeout != 0)){
-    if (millis() > _est->lastFixTime + _est->fixTimeout * 1000.0){
+    if (ms() > _est->lastFixTime + _est->fixTimeout * 1000.0){
       (*_op)->onGpsFixTimeout();        
     }           
   }     
@@ -202,7 +209,7 @@ void LineTracker::trackLine(bool runControl){
   if (_est->stateLocalizationMode == LOC_GPS){
     if  ((_gpsSol() == SOL_FIXED) || (_gpsSol() == SOL_FLOAT)){        
       if (abs(linear) > 0.06) {
-        if ((millis() > _est->linearMotionStartTime + 5000) && (_est->stateGroundSpeed < 0.03)){
+        if ((ms() > _est->linearMotionStartTime + 5000) && (_est->stateGroundSpeed < 0.03)){
           // if in linear motion and not enough ground speed => obstacle
           //if ( (GPS_SPEED_DETECTION) && (!_map->isUndocking()) ) { 
           if (GPS_SPEED_DETECTION) {         
@@ -226,7 +233,7 @@ void LineTracker::trackLine(bool runControl){
   // tree-canopy detection: track how long GPS has been non-FIXED
   if (_est->stateLocalizationMode == LOC_GPS) {
     if (_gpsSol() != SOL_FIXED) {
-      if (gpsDegradedSince == 0) gpsDegradedSince = millis();
+      if (gpsDegradedSince == 0) gpsDegradedSince = ms();
     } else {
       gpsDegradedSince = 0;
     }
@@ -304,7 +311,7 @@ void LineTracker::trackLine(bool runControl){
   if (detectLift()) mow = false;
   
   if (mow)  { 
-    if (millis() < _mot->motorMowSpinUpTime + 10000){
+    if (ms() < _mot->motorMowSpinUpTime + 10000){
        // wait until mowing motor is running
       if (!buzzer.isPlaying()) buzzer.sound(SND_WARNING, true);
       linear = 0;
@@ -368,13 +375,13 @@ void LineTracker::trackLine(bool runControl){
   bool treeSkip = GPS_TREE_SKIP
                && (_map->wayMode == WAY_MOW)
                && (gpsDegradedSince != 0)
-               && (millis() - gpsDegradedSince > GPS_TREE_SKIP_TIMEOUT)
+               && (ms() - gpsDegradedSince > GPS_TREE_SKIP_TIMEOUT)
                && (targetDist < GPS_TREE_SKIP_MAX_DIST);
   if (_est->stateLocalizationMode != LOC_REFLECTOR_TAG){
     if (targetReached || treeSkip){
       if (treeSkip && !targetReached){
         CONSOLE.print("WARN: GPS degraded under tree (");
-        CONSOLE.print((millis() - gpsDegradedSince) / 1000.0, 1);
+        CONSOLE.print((ms() - gpsDegradedSince) / 1000.0, 1);
         CONSOLE.print("s, dist=");
         CONSOLE.print(targetDist, 2);
         CONSOLE.println("m) - forcing waypoint advance");
