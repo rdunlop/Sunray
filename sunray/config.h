@@ -291,10 +291,10 @@ Also, you may choose the serial port below for serial monitor output (CONSOLE).
 // see Wiki on how to install the ultrasonic sensors: 
 // https://wiki.ardumower.de/index.php?title=Ardumower_Sunray#Ultrasonic_sensor
 
-#define SONAR_INSTALLED 1              // uncomment if ultrasonic sensors are installed
-#define SONAR_ENABLE true              // should ultrasonic sensor be used?
-//#define SONAR_ENABLE false
-#define SONAR_TRIGGER_OBSTACLES true     // should sonar be used to trigger obstacles? if not, mower will only slow down
+//#define SONAR_INSTALLED 1              // uncomment if ultrasonic sensors are installed
+//#define SONAR_ENABLE true              // should ultrasonic sensor be used?
+#define SONAR_ENABLE false
+#define SONAR_TRIGGER_OBSTACLES false    // should sonar be used to trigger obstacles? if not, mower will only slow down
 #define CAN_SONAR_TRIGGER_OBSTACLES 1    // enable owlController CAN ultrasonic obstacle trigger
 #define SONAR_LEFT_OBSTACLE_CM   15      // stop mowing operation below this distance (cm)
 #define SONAR_CENTER_OBSTACLE_CM 15      // stop mowing operation below this distance (cm)
