@@ -5,14 +5,7 @@ services:
       - .:/sunray
     working_dir: /sunray/linux
     command: >
-      bash -c "
-        cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCONFIG_FILE=/sunray/linux/config_sim.h
-          -DBUILD_TESTS=ON &&
-        cmake --build build --parallel $(nproc) &&
-        ctest --test-dir build --output-on-failure
-      "
+      bash -c "make build && make test"
 
   dev:
     build: .

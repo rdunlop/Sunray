@@ -119,7 +119,7 @@ add_library(sunray_lib STATIC
   ${sunray_c}
   ${FIRMWARE_PATH}/sunray.ino
 )
-target_compile_definitions(sunray_lib PUBLIC NO_MAIN)
+target_compile_definitions(sunray_lib PRIVATE NO_MAIN)
 target_include_directories(sunray_lib PUBLIC
   src
   ${FIRMWARE_PATH}

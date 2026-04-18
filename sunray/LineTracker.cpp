@@ -12,37 +12,50 @@
 #include "src/op/op.h"
 #include "Stats.h"
 #include "events.h"
+#include "gps.h"
 
 
 //PID pidLine(0.2, 0.01, 0); // not used
 //PID pidAngle(2, 0.1, 0);  // not used
 static Polygon circle(8);
 
+// ---------------------------------------------------------------------------
+// Constructors
+// ---------------------------------------------------------------------------
+
+LineTracker::LineTracker()
+    : _est(&stateEstimator), _map(&maps), _mot(&motor), _op(&activeOp),
+      _gpsSol([]{ return gps.solution; }) {}
+
+LineTracker::LineTracker(StateEstimator& est, Map& mp, Motor& mot, Op*& op,
+                         std::function<SolType()> gpsSol)
+    : _est(&est), _map(&mp), _mot(&mot), _op(&op), _gpsSol(std::move(gpsSol)) {}
+
 // control robot velocity (linear,angular) to track line to next waypoint (target)
 // uses a stanley controller for line tracking
 // https://medium.com/@dingyan7361/three-methods-of-vehicle-lateral-control-pure-pursuit-stanley-and-mpc-db8cc1d32081
 void LineTracker::trackLine(bool runControl){  
-  Point target = maps.targetPoint;
-  Point lastTarget = maps.lastTargetPoint;
+  Point target = _map->targetPoint;
+  Point lastTarget = _map->lastTargetPoint;
   float linear = 1.0;  
   bool mow = true;
-  if (stateEstimator.stateOp == OP_DOCK) mow = false;
+  if (_est->stateOp == OP_DOCK) mow = false;
   float angular = 0;      
-  float targetDelta = pointsAngle(stateEstimator.stateX, stateEstimator.stateY, target.x(), target.y());      
-  if (maps.trackReverse) targetDelta = scalePI(targetDelta + PI);  
-  targetDelta = scalePIangles(targetDelta, stateEstimator.stateDelta);
-  trackerDiffDelta = distancePI(stateEstimator.stateDelta, targetDelta);                         
-  stateEstimator.lateralError = distanceLineInfinite(stateEstimator.stateX, stateEstimator.stateY, lastTarget.x(), lastTarget.y(), target.x(), target.y());        
-  float distToPath = distanceLine(stateEstimator.stateX, stateEstimator.stateY, lastTarget.x(), lastTarget.y(), target.x(), target.y());        
+  float targetDelta = pointsAngle(_est->stateX, _est->stateY, target.x(), target.y());      
+  if (_map->trackReverse) targetDelta = scalePI(targetDelta + PI);  
+  targetDelta = scalePIangles(targetDelta, _est->stateDelta);
+  trackerDiffDelta = distancePI(_est->stateDelta, targetDelta);                         
+  _est->lateralError = distanceLineInfinite(_est->stateX, _est->stateY, lastTarget.x(), lastTarget.y(), target.x(), target.y());        
+  float distToPath = distanceLine(_est->stateX, _est->stateY, lastTarget.x(), lastTarget.y(), target.x(), target.y());        
 
-  float lineDist = maps.distanceToTargetPoint(lastTarget.x(), lastTarget.y());
+  float lineDist = _map->distanceToTargetPoint(lastTarget.x(), lastTarget.y());
   /*if ((abs(lineDist-lastLineDist ) > 0.0) || (abs(distToPath) > 0.5)) {
     CONSOLE.print("distToPath=");
     CONSOLE.print(distToPath);
     CONSOLE.print(" x=");
-    CONSOLE.print(stateEstimator.stateX);
+    CONSOLE.print(_est->stateX);
     CONSOLE.print(" y=");    
-    CONSOLE.print(stateEstimator.stateY);
+    CONSOLE.print(_est->stateY);
     CONSOLE.print(" lastX=");    
     CONSOLE.print(lastTarget.x());
     CONSOLE.print(" lastY=");    
@@ -53,9 +66,9 @@ void LineTracker::trackLine(bool runControl){
     CONSOLE.println(target.y());
     lastLineDist = lineDist;
   }*/
-  float targetDist = maps.distanceToTargetPoint(stateEstimator.stateX, stateEstimator.stateY);
+  float targetDist = _map->distanceToTargetPoint(_est->stateX, _est->stateY);
   
-  float lastTargetDist = maps.distanceToLastTargetPoint(stateEstimator.stateX, stateEstimator.stateY);  
+  float lastTargetDist = _map->distanceToLastTargetPoint(_est->stateX, _est->stateY);  
   if (SMOOTH_CURVES)
     targetReached = (targetDist < 0.2);    
   else 
@@ -96,41 +109,41 @@ void LineTracker::trackLine(bool runControl){
   } 
   else {
     // line control (stanley)    
-    bool straight = maps.nextPointIsStraight();
+    bool straight = _map->nextPointIsStraight();
     bool trackslow_allowed = true;
 
     rotateLeft = false;
     rotateRight = false;
 
     // in case of docking or undocking - check if trackslow is allowed
-    if ( maps.isUndocking() || maps.isDocking() ) {
+    if ( _map->isUndocking() || _map->isDocking() ) {
         float dockX = 0;
         float dockY = 0;
         float dockDelta = 0;
-        maps.getDockingPos(dockX, dockY, dockDelta);
-        float dist_dock = distance(dockX, dockY, stateEstimator.stateX, stateEstimator.stateY);
+        _map->getDockingPos(dockX, dockY, dockDelta);
+        float dist_dock = distance(dockX, dockY, _est->stateX, _est->stateY);
         // only allow trackslow if we are near dock (below DOCK_UNDOCK_TRACKSLOW_DISTANCE)
         if (dist_dock > DOCK_UNDOCK_TRACKSLOW_DISTANCE) {
             trackslow_allowed = false;
         }
     }
 
-    if (maps.trackSlow && trackslow_allowed) {
+    if (_map->trackSlow && trackslow_allowed) {
       // planner forces slow tracking (e.g. docking etc)
       linear = DOCK_LINEAR_SPEED; // 0.1           
-    } else if (     ((stateEstimator.setSpeed > 0.2) && (maps.distanceToTargetPoint(stateEstimator.stateX, stateEstimator.stateY) < 0.5) && (!straight))   // approaching
-          || ((stateEstimator.linearMotionStartTime != 0) && (millis() < stateEstimator.linearMotionStartTime + 3000))                      // leaving  
+    } else if (     ((_est->setSpeed > 0.2) && (_map->distanceToTargetPoint(_est->stateX, _est->stateY) < 0.5) && (!straight))   // approaching
+          || ((_est->linearMotionStartTime != 0) && (millis() < _est->linearMotionStartTime + 3000))                      // leaving  
        ) 
     {
       linear = 0.1; // reduce speed when approaching/leaving waypoints          
       //CONSOLE.println("SLOW: approach")
     } 
     else {
-      if ((stateEstimator.stateLocalizationMode == LOC_GPS) && (gps.solution == SOL_FLOAT)){        
-        linear = min(stateEstimator.setSpeed, 0.1); // reduce speed for float solution
+      if ((_est->stateLocalizationMode == LOC_GPS) && (_gpsSol() == SOL_FLOAT)){        
+        linear = min(_est->setSpeed, 0.1); // reduce speed for float solution
         //CONSOLE.println("SLOW: float");
       } else
-        linear = stateEstimator.setSpeed;         // desired speed
+        linear = _est->setSpeed;         // desired speed
       if (bumperDriver.nearObstacle()){
         linear = 0.1;  // slow down near obstacles 
         //CONSOLE.println("SLOW: BUMPER");      
@@ -145,7 +158,7 @@ void LineTracker::trackLine(bool runControl){
       }
     }      
     // slow down speed in case of overload and overwrite all prior speed 
-    if ( (motor.motorLeftOverload) || (motor.motorRightOverload) || (motor.motorMowOverload) ){
+    if ( (_mot->motorLeftOverload) || (_mot->motorRightOverload) || (_mot->motorMowOverload) ){
       if (!printmotoroverload) {
           Logger.event(EVT_MOTOR_OVERLOAD_REDUCE_SPEED);
           CONSOLE.println("motor overload detected: reducing linear speed");
@@ -160,38 +173,38 @@ void LineTracker::trackLine(bool runControl){
     //angula                                    r = 3.0 * trackerDiffDelta + 3.0 * lateralError;       // correct for path errors 
     float k = stanleyTrackingNormalK; // STANLEY_CONTROL_K_NORMAL;
     float p = stanleyTrackingNormalP; // STANLEY_CONTROL_P_NORMAL;    
-    if (maps.trackSlow && trackslow_allowed) {
+    if (_map->trackSlow && trackslow_allowed) {
       k = stanleyTrackingSlowK; //STANLEY_CONTROL_K_SLOW;   
       p = stanleyTrackingSlowP; //STANLEY_CONTROL_P_SLOW;          
     }
-    angular =  p * trackerDiffDelta + atan2(k * stateEstimator.lateralError, (0.001 + fabs(motor.linearSpeedSet)));       // correct for path errors           
+    angular =  p * trackerDiffDelta + atan2(k * _est->lateralError, (0.001 + fabs(_mot->linearSpeedSet)));       // correct for path errors           
     /*pidLine.w = 0;              
-    pidLine.x = stateEstimator.lateralError;
+    pidLine.x = _est->lateralError;
     pidLine.max_output = PI;
     pidLine.y_min = -PI;
     pidLine.y_max = PI;
     pidLine.compute();
     angular = -pidLine.y;   */
-    //CONSOLE.print(stateEstimator.lateralError);        
+    //CONSOLE.print(_est->lateralError);        
     //CONSOLE.print(",");        
     //CONSOLE.println(angular/PI*180.0);            
-    if (maps.trackReverse) linear *= -1;   // reverse line tracking needs negative speed
+    if (_map->trackReverse) linear *= -1;   // reverse line tracking needs negative speed
     // restrict steering angle for stanley  (not required anymore after last state estimation bugfix)
     //if (!SMOOTH_CURVES) angular = max(-PI/16, min(PI/16, angular)); 
   }
   // check some pre-conditions that can make linear+angular speed zero
-  if ((stateEstimator.stateLocalizationMode == LOC_GPS) && (stateEstimator.fixTimeout != 0)){
-    if (millis() > stateEstimator.lastFixTime + stateEstimator.fixTimeout * 1000.0){
-      activeOp->onGpsFixTimeout();        
+  if ((_est->stateLocalizationMode == LOC_GPS) && (_est->fixTimeout != 0)){
+    if (millis() > _est->lastFixTime + _est->fixTimeout * 1000.0){
+      (*_op)->onGpsFixTimeout();        
     }           
   }     
 
-  if (stateEstimator.stateLocalizationMode == LOC_GPS){
-    if  ((gps.solution == SOL_FIXED) || (gps.solution == SOL_FLOAT)){        
+  if (_est->stateLocalizationMode == LOC_GPS){
+    if  ((_gpsSol() == SOL_FIXED) || (_gpsSol() == SOL_FLOAT)){        
       if (abs(linear) > 0.06) {
-        if ((millis() > stateEstimator.linearMotionStartTime + 5000) && (stateEstimator.stateGroundSpeed < 0.03)){
+        if ((millis() > _est->linearMotionStartTime + 5000) && (_est->stateGroundSpeed < 0.03)){
           // if in linear motion and not enough ground speed => obstacle
-          //if ( (GPS_SPEED_DETECTION) && (!maps.isUndocking()) ) { 
+          //if ( (GPS_SPEED_DETECTION) && (!_map->isUndocking()) ) { 
           if (GPS_SPEED_DETECTION) {         
             CONSOLE.println("gps no speed => obstacle!");
             stats.statMowGPSNoSpeedCounter++;
@@ -205,14 +218,14 @@ void LineTracker::trackLine(bool runControl){
       // no gps solution
       if (REQUIRE_VALID_GPS){
         CONSOLE.println("WARN: no gps solution!");
-        activeOp->onGpsNoSignal();
+        (*_op)->onGpsNoSignal();
       }
     }
   }
 
   // tree-canopy detection: track how long GPS has been non-FIXED
-  if (stateEstimator.stateLocalizationMode == LOC_GPS) {
-    if (gps.solution != SOL_FIXED) {
+  if (_est->stateLocalizationMode == LOC_GPS) {
+    if (_gpsSol() != SOL_FIXED) {
       if (gpsDegradedSince == 0) gpsDegradedSince = millis();
     } else {
       gpsDegradedSince = 0;
@@ -221,8 +234,8 @@ void LineTracker::trackLine(bool runControl){
     gpsDegradedSince = 0;
   }
 
-  if (stateEstimator.stateLocalizationMode == LOC_APRIL_TAG){
-    if (!stateEstimator.stateAprilTagFound){
+  if (_est->stateLocalizationMode == LOC_APRIL_TAG){
+    if (!_est->stateAprilTagFound){
       linear = 0; // wait until april-tag found 
       angular = 0; 
     } else {
@@ -231,8 +244,8 @@ void LineTracker::trackLine(bool runControl){
       //angular = 0; 
     }
   }
-  if (stateEstimator.stateLocalizationMode == LOC_REFLECTOR_TAG){
-    if (!stateEstimator.stateReflectorTagFound){
+  if (_est->stateLocalizationMode == LOC_REFLECTOR_TAG){
+    if (!_est->stateReflectorTagFound){
       linear = 0; // wait until reflector-tag found 
       angular = 0; 
     } else {
@@ -242,10 +255,10 @@ void LineTracker::trackLine(bool runControl){
       angular =  max(min(1.0 * trackerDiffDelta, maxAngular), -maxAngular);
       angular =  max(min(angular, maxAngular), -maxAngular);      
       linear = 0.05;      
-      if (maps.trackReverse) linear = -0.05;   // reverse line tracking needs negative speed           
+      if (_map->trackReverse) linear = -0.05;   // reverse line tracking needs negative speed           
     }
   }
-  if (stateEstimator.stateLocalizationMode == LOC_GUIDANCE_SHEET){
+  if (_est->stateLocalizationMode == LOC_GUIDANCE_SHEET){
       if (!buzzer.isPlaying()) buzzer.sound(SND_WARNING, true);
       angular = 0;
   }
@@ -253,26 +266,26 @@ void LineTracker::trackLine(bool runControl){
   // gps-jump/false fix check
   if (KIDNAP_DETECT){
     float allowedPathTolerance = KIDNAP_DETECT_ALLOWED_PATH_TOLERANCE;     
-    if ( maps.isUndocking() || maps.isDocking() ) {
+    if ( _map->isUndocking() || _map->isDocking() ) {
         float dockX = 0;
         float dockY = 0;
         float dockDelta = 0;
-        maps.getDockingPos(dockX, dockY, dockDelta);
-        float dist = distance(dockX, dockY, stateEstimator.stateX, stateEstimator.stateY);
+        _map->getDockingPos(dockX, dockY, dockDelta);
+        float dist = distance(dockX, dockY, _est->stateX, _est->stateY);
         // check if current distance to docking station is below
         // KIDNAP_DETECT_DISTANCE_DOCK_UNDOCK to trigger KIDNAP_DETECT_ALLOWED_PATH_TOLERANCE_DOCK_UNDOCK
         if (dist < KIDNAP_DETECT_DISTANCE_DOCK_UNDOCK) {
             allowedPathTolerance = KIDNAP_DETECT_ALLOWED_PATH_TOLERANCE_DOCK_UNDOCK;
         }
     }    
-    if ((stateEstimator.stateLocalizationMode == LOC_GPS) && (fabs(distToPath) > allowedPathTolerance)){ // actually, this should not happen (except on false GPS fixes or robot being kidnapped...)
+    if ((_est->stateLocalizationMode == LOC_GPS) && (fabs(distToPath) > allowedPathTolerance)){ // actually, this should not happen (except on false GPS fixes or robot being kidnapped...)
       if (!stateKidnapped){
         stateKidnapped = true;
         CONSOLE.print("KIDNAP_DETECT: stateKidnapped=");
         CONSOLE.print(stateKidnapped);
         CONSOLE.print(" distToPath=");
         CONSOLE.println(distToPath);
-        activeOp->onKidnapped(stateKidnapped);
+        (*_op)->onKidnapped(stateKidnapped);
       }            
     } else {
       if (stateKidnapped) {
@@ -281,7 +294,7 @@ void LineTracker::trackLine(bool runControl){
         CONSOLE.print(stateKidnapped);
         CONSOLE.print(" distToPath=");
         CONSOLE.println(distToPath);
-        activeOp->onKidnapped(stateKidnapped);        
+        (*_op)->onKidnapped(stateKidnapped);        
       }
     }
   }
@@ -291,7 +304,7 @@ void LineTracker::trackLine(bool runControl){
   if (detectLift()) mow = false;
   
   if (mow)  { 
-    if (millis() < motor.motorMowSpinUpTime + 10000){
+    if (millis() < _mot->motorMowSpinUpTime + 10000){
        // wait until mowing motor is running
       if (!buzzer.isPlaying()) buzzer.sound(SND_WARNING, true);
       linear = 0;
@@ -309,55 +322,55 @@ void LineTracker::trackLine(bool runControl){
     }
 
     #ifdef DOCK_REFLECTOR_TAG
-      if (stateEstimator.stateLocalizationMode == LOC_REFLECTOR_TAG){             
+      if (_est->stateLocalizationMode == LOC_REFLECTOR_TAG){             
         CONSOLE.print("loc=");
-        if (stateEstimator.stateLocalizationMode == LOC_APRIL_TAG) CONSOLE.print("april");
-        if (stateEstimator.stateLocalizationMode == LOC_GPS) CONSOLE.print("gps");
-        if (stateEstimator.stateLocalizationMode == LOC_GUIDANCE_SHEET) CONSOLE.print("guide");    
-        if (stateEstimator.stateLocalizationMode == LOC_REFLECTOR_TAG) CONSOLE.print("reflector");        
+        if (_est->stateLocalizationMode == LOC_APRIL_TAG) CONSOLE.print("april");
+        if (_est->stateLocalizationMode == LOC_GPS) CONSOLE.print("gps");
+        if (_est->stateLocalizationMode == LOC_GUIDANCE_SHEET) CONSOLE.print("guide");    
+        if (_est->stateLocalizationMode == LOC_REFLECTOR_TAG) CONSOLE.print("reflector");        
         CONSOLE.print(" tagFound=");
-        CONSOLE.print(stateEstimator.stateReflectorTagFound);
+        CONSOLE.print(_est->stateReflectorTagFound);
         CONSOLE.print(" tagOut=");
-        CONSOLE.print(stateEstimator.stateReflectorTagOutsideFound);      
+        CONSOLE.print(_est->stateReflectorTagOutsideFound);      
         CONSOLE.print(" reflX=");
-        CONSOLE.print(stateEstimator.stateXReflectorTag);
+        CONSOLE.print(_est->stateXReflectorTag);
         CONSOLE.print(" reflY=");
-        CONSOLE.print(stateEstimator.stateYReflectorTag);
+        CONSOLE.print(_est->stateYReflectorTag);
         CONSOLE.print(" mow=");
         CONSOLE.print(mow);      
         CONSOLE.print(" shouldDock=");
-        CONSOLE.print(maps.shouldDock);      
+        CONSOLE.print(_map->shouldDock);      
         CONSOLE.print(" trackRev=");
-        CONSOLE.print(maps.trackReverse);
+        CONSOLE.print(_map->trackReverse);
         CONSOLE.print(" lin=");
         CONSOLE.print(linear);
         CONSOLE.print(" ang=");
         CONSOLE.print(angular);    
         CONSOLE.print(" isBetwLNTLDockPt=");
-        CONSOLE.print(maps.isBetweenLastAndNextToLastDockPoint());
+        CONSOLE.print(_map->isBetweenLastAndNextToLastDockPoint());
         CONSOLE.print(" dockPtIdx=");
-        CONSOLE.print(maps.dockPointsIdx);
+        CONSOLE.print(_map->dockPointsIdx);
         CONSOLE.print(" freePtIdx=");
-        CONSOLE.print(maps.freePointsIdx);
+        CONSOLE.print(_map->freePointsIdx);
         CONSOLE.print(" wayMode=");
-        if (maps.wayMode == WAY_DOCK) CONSOLE.print("WAY_DOCK");
-        if (maps.wayMode == WAY_MOW) CONSOLE.print("WAY_MOW");
-        if (maps.wayMode == WAY_FREE) CONSOLE.print("WAY_FREE");
+        if (_map->wayMode == WAY_DOCK) CONSOLE.print("WAY_DOCK");
+        if (_map->wayMode == WAY_MOW) CONSOLE.print("WAY_MOW");
+        if (_map->wayMode == WAY_FREE) CONSOLE.print("WAY_FREE");
         CONSOLE.println();
       }
     #endif
 
-    motor.setLinearAngularSpeed(linear, angular);      
-    motor.setMowState(mow);    
+    _mot->setLinearAngularSpeed(linear, angular);      
+    _mot->setMowState(mow);    
   }
 
-  //if (!maps.isTargetingLastDockPoint()){
+  //if (!_map->isTargetingLastDockPoint()){
   bool treeSkip = GPS_TREE_SKIP
-               && (maps.wayMode == WAY_MOW)
+               && (_map->wayMode == WAY_MOW)
                && (gpsDegradedSince != 0)
                && (millis() - gpsDegradedSince > GPS_TREE_SKIP_TIMEOUT)
                && (targetDist < GPS_TREE_SKIP_MAX_DIST);
-  if (stateEstimator.stateLocalizationMode != LOC_REFLECTOR_TAG){
+  if (_est->stateLocalizationMode != LOC_REFLECTOR_TAG){
     if (targetReached || treeSkip){
       if (treeSkip && !targetReached){
         CONSOLE.print("WARN: GPS degraded under tree (");
@@ -369,11 +382,11 @@ void LineTracker::trackLine(bool runControl){
       gpsDegradedSince = 0;  // reset timer so next waypoint gets a clean window
       rotateLeft = false;
       rotateRight = false;
-      activeOp->onTargetReached();
-      bool straight = maps.nextPointIsStraight();
-      if (!maps.nextPoint(false,stateEstimator.stateX,stateEstimator.stateY)){
+      (*_op)->onTargetReached();
+      bool straight = _map->nextPointIsStraight();
+      if (!_map->nextPoint(false,_est->stateX,_est->stateY)){
         // finish
-        activeOp->onNoFurtherWaypoints();
+        (*_op)->onNoFurtherWaypoints();
       } else {
         // next waypoint
         //if (!straight) angleToTargetFits = false;
