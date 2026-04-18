@@ -64,7 +64,7 @@ endforeach()
 
 message("---pi_sources---")
 file(GLOB_RECURSE pi_sources src/**.cpp src/**.c)
-## list(FILTER pi_sources EXCLUDE REGEX "wiring_main.cpp")
+list(FILTER pi_sources EXCLUDE REGEX "wiring_main\\.cpp")
 foreach (filename ${pi_sources})
     message(${filename})
 endforeach()
@@ -93,25 +93,12 @@ set_source_files_properties(${FIRMWARE_PATH}/sunray.ino PROPERTIES COMPILE_FLAGS
 ##  add_definitions("-x c++")
 ## endif()
 
-add_executable(sunray ${pi_sources} ${sunray_cpp} ${sunray_c} ${FIRMWARE_PATH}/sunray.ino)
-target_include_directories(sunray PRIVATE src ${FIRMWARE_PATH}/src)
-# target_link_libraries(sunray "${CMAKE_SOURCE_DIR}/lib/libarduino_${CMAKE_SYSTEM_PROCESSOR}.a")
-
-# target_include_directories(sunray PUBLIC ${LIBNL_INCLUDE_DIR})
-# target_link_libraries(sunray ${LIBIW_LIB} ${LIBNL_LIB} ${LIBNL_GENL_LIB})
-
-## set_property(TARGET sunray PROPERTY C_STANDARD 90)
-## set_target_properties(sunray PROPERTIES LINKER_LANGUAGE CXX)
-
-
-#ADD_LIBRARY( arduino_linux STATIC ${pi_sources} )
-#target_include_directories(arduino_linux PRIVATE src)
+# ---- External dependencies (shared by library, executable, and tests) --------
 
 # OpenSSL for TLS on Linux
 find_package(OpenSSL REQUIRED)
 if (OPENSSL_FOUND)
   message(STATUS "OpenSSL found: ${OPENSSL_VERSION}")
-  target_link_libraries(sunray OpenSSL::SSL OpenSSL::Crypto)
 else()
   message(FATAL_ERROR "OpenSSL not found. Install libssl-dev and rerun cmake.")
 endif()
@@ -121,13 +108,45 @@ find_package(JPEG REQUIRED)
 message(STATUS "JPEG_FOUND: ${JPEG_FOUND}")
 message(STATUS "JPEG_LIBRARIES: ${JPEG_LIBRARIES}")
 message(STATUS "JPEG_INCLUDE_DIRS: ${JPEG_INCLUDE_DIRS}")
+
+# ---- sunray_lib: all firmware + HAL sources, no main() ----------------------
+# wiring_main.cpp is excluded from pi_sources above; it is compiled separately
+# for each binary so millis()/micros()/main() appear exactly once per binary.
+
+add_library(sunray_lib STATIC
+  ${pi_sources}
+  ${sunray_cpp}
+  ${sunray_c}
+  ${FIRMWARE_PATH}/sunray.ino
+)
+target_compile_definitions(sunray_lib PUBLIC NO_MAIN)
+target_include_directories(sunray_lib PUBLIC
+  src
+  ${FIRMWARE_PATH}
+  ${FIRMWARE_PATH}/src
+)
+target_link_libraries(sunray_lib PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 if(TARGET JPEG::JPEG)
-  target_link_libraries(sunray JPEG::JPEG)
+  target_link_libraries(sunray_lib PUBLIC JPEG::JPEG)
 else()
-  target_link_libraries(sunray ${JPEG_LIBRARIES})
+  target_link_libraries(sunray_lib PUBLIC ${JPEG_LIBRARIES})
   if(JPEG_INCLUDE_DIRS)
-    target_include_directories(sunray ${JPEG_INCLUDE_DIRS})
+    target_include_directories(sunray_lib PUBLIC ${JPEG_INCLUDE_DIRS})
   endif()
+endif()
+
+# ---- sunray executable -------------------------------------------------------
+# wiring_main.cpp compiled WITHOUT NO_MAIN so its main() and millis() are emitted.
+
+add_executable(sunray ${CMAKE_SOURCE_DIR}/src/wiring_main.cpp)
+target_link_libraries(sunray sunray_lib)
+
+# ---- tests -------------------------------------------------------------------
+
+option(BUILD_TESTS "Build the test suite" ON)
+if(BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()
 
 
