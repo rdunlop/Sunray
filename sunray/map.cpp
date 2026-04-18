@@ -944,10 +944,10 @@ void Map::setIsDocked(bool flag){
     trackSlow = false;
     useGPSfixForPosEstimation = true;
     useGPSfixForDeltaEstimation = true;
-    useGPSfloatForPosEstimation = true;    
-    useGPSfloatForDeltaEstimation = true;
+    useGPSfloatForPosEstimation = true;
+    useGPSfloatForDeltaEstimation = false;  // only snap heading during RTK fix; float velocity is unreliable
     useIMU = true;
-  }  
+  }
 }
 
 bool Map::isUndocking(){
@@ -1380,8 +1380,8 @@ bool Map::nextDockPoint(bool sim){
         if (!sim) trackSlow = false;
         if (!sim) useGPSfixForPosEstimation = true;        
         if (!sim) useGPSfixForDeltaEstimation = true;
-        if (!sim) useGPSfloatForPosEstimation = true;    
-        if (!sim) useGPSfloatForDeltaEstimation = true;    
+        if (!sim) useGPSfloatForPosEstimation = true;
+        if (!sim) useGPSfloatForDeltaEstimation = false;  // only snap heading during RTK fix; float velocity is unreliable
         if (!sim) useIMU = true;    
         return true;
       } else return false;        

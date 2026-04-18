@@ -33,6 +33,7 @@ private:
   bool printmotoroverload = false;
   bool trackerDiffDelta_positive = false;
   float lastLineDist = 0;
+  unsigned long gpsDegradedSince = 0;  // millis() when GPS first dropped below SOL_FIXED; 0 = OK
 };
 
 

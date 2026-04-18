@@ -209,6 +209,18 @@ void LineTracker::trackLine(bool runControl){
       }
     }
   }
+
+  // tree-canopy detection: track how long GPS has been non-FIXED
+  if (stateEstimator.stateLocalizationMode == LOC_GPS) {
+    if (gps.solution != SOL_FIXED) {
+      if (gpsDegradedSince == 0) gpsDegradedSince = millis();
+    } else {
+      gpsDegradedSince = 0;
+    }
+  } else {
+    gpsDegradedSince = 0;
+  }
+
   if (stateEstimator.stateLocalizationMode == LOC_APRIL_TAG){
     if (!stateEstimator.stateAprilTagFound){
       linear = 0; // wait until april-tag found 
@@ -340,18 +352,31 @@ void LineTracker::trackLine(bool runControl){
   }
 
   //if (!maps.isTargetingLastDockPoint()){
+  bool treeSkip = GPS_TREE_SKIP
+               && (maps.wayMode == WAY_MOW)
+               && (gpsDegradedSince != 0)
+               && (millis() - gpsDegradedSince > GPS_TREE_SKIP_TIMEOUT)
+               && (targetDist < GPS_TREE_SKIP_MAX_DIST);
   if (stateEstimator.stateLocalizationMode != LOC_REFLECTOR_TAG){
-    if (targetReached){
+    if (targetReached || treeSkip){
+      if (treeSkip && !targetReached){
+        CONSOLE.print("WARN: GPS degraded under tree (");
+        CONSOLE.print((millis() - gpsDegradedSince) / 1000.0, 1);
+        CONSOLE.print("s, dist=");
+        CONSOLE.print(targetDist, 2);
+        CONSOLE.println("m) - forcing waypoint advance");
+      }
+      gpsDegradedSince = 0;  // reset timer so next waypoint gets a clean window
       rotateLeft = false;
       rotateRight = false;
       activeOp->onTargetReached();
       bool straight = maps.nextPointIsStraight();
       if (!maps.nextPoint(false,stateEstimator.stateX,stateEstimator.stateY)){
-        // finish        
-        activeOp->onNoFurtherWaypoints();      
-      } else {      
-        // next waypoint          
-        //if (!straight) angleToTargetFits = false;      
+        // finish
+        activeOp->onNoFurtherWaypoints();
+      } else {
+        // next waypoint
+        //if (!straight) angleToTargetFits = false;
       }
     }
   }  

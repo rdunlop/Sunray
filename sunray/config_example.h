@@ -451,6 +451,12 @@ Also, you may choose the serial port below for serial monitor output (CONSOLE).
 #define TARGET_REACHED_TOLERANCE 0.1
 #define TARGET_ANGLE_TOLERANCE 20
 
+// force waypoint advance when GPS quality degrades (e.g. under tree canopy)
+// set GPS_TREE_SKIP false to disable this feature entirely
+#define GPS_TREE_SKIP           true   // enable forced waypoint advance on sustained GPS degradation
+#define GPS_TREE_SKIP_TIMEOUT   3000   // ms of non-FIXED GPS before forcing advance
+#define GPS_TREE_SKIP_MAX_DIST  1.0    // m - only skip if already within this distance of target
+
 // stanley control for path tracking - determines gain how fast to correct for lateral path errors
 #define STANLEY_CONTROL_P_NORMAL  3.0   // 3.0 for path tracking control (angular gain) when mowing
 #define STANLEY_CONTROL_K_NORMAL  1.0   // 1.0 for path tracking control (lateral gain) when mowing
