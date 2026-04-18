@@ -3,7 +3,7 @@
 configure:
 	cmake -S . -B build \
 	  -DCMAKE_BUILD_TYPE=Debug \
-	  -DCONFIG_FILE=/sunray/linux/config_sim.h \
+	  -DCONFIG_FILE=$(CURDIR)/config_sim.h \
 	  -DBUILD_TESTS=ON
 
 build: configure
